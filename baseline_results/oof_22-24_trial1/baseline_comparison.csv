@@ -1,0 +1,5 @@
+strategy,n_evaluated_days,n_clean_days,total_net_revenue,annualised_net_revenue_all,annualised_net_revenue_clean,avg_net_revenue_per_day,total_da_revenue,total_bm_revenue,total_dc_low_revenue,total_dc_high_revenue,total_degradation_cost,n_solve_failures
+main,1025,903,71595.08,25494.83,25425.5,69.85,-92590.28,104015.31,81629.42,12243.09,33701.92,3
+median,1028,903,100350.46,35630.27,35342.13,97.62,-7729.43,23107.18,81200.79,14576.59,10804.59,0
+prev_day,1006,903,31483.3,11422.87,10623.88,31.3,-170071.45,174403.43,68484.78,15764.66,57098.23,22
+prev_week,1005,903,29873.32,10849.51,9911.61,29.72,-166337.41,171703.8,66230.93,15189.62,56913.9,23

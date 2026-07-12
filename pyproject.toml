@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multimarket-bess-optimizer"
+version = "0.1.0"
+description = "Multi-service battery dispatch optimiser across day-ahead, Dynamic Containment, and Balancing Mechanism markets"
+requires-python = ">=3.11"
+dependencies = [
+    # Data
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "pyarrow>=16.0.0",
+    # Optimisation
+    "pyomo>=6.7.0",
+    "highspy>=1.7.0",
+    # Forecasting
+    "lightgbm>=4.6.0",
+    "scikit-learn>=1.4.0",
+    "scipy>=1.11.0",
+    # Data ingestion
+    "httpx>=0.28.1",
+    "openmeteo-requests>=1.7.5",
+    # Config
+    "pydantic-settings>=2.3.0",
+    # Degradation
+    "rainflow>=3.2.0",
+    "pytz>=2026.2",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "streamlit>=1.35.0",
+    "matplotlib>=3.9.0",
+    "plotly>=5.22.0",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "optimiser*",
+    "forecasting*",
+    "ingestion*",
+    "features*",
+    "backtest*",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
