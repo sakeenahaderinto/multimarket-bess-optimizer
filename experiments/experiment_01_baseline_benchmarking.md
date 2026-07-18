@@ -39,7 +39,7 @@ All four strategies pass through identical optimiser code (`optimiser/model.py`)
 
 | Label | Scenario assumption |
 |---|---|
-| `main` | 20 joint price scenarios sampled from a Gaussian copula fitted to LightGBM quantile forecast outputs (q10/q50/q90) via Spearman→Gaussian correlation conversion |
+| `main` | 20 joint price scenarios sampled from a Gaussian copula fitted to LightGBM quantile forecast outputs (q10/q50/q90) via Spearman->Gaussian correlation conversion |
 | `median` | Single deterministic scenario: q50 from the same trained quantile forecasters |
 | `prev_day` | Single deterministic scenario: realised prices from 24 hours prior (lag = 48 half-hour periods) |
 | `prev_week` | Single deterministic scenario: realised prices from 168 hours prior (lag = 336 half-hour periods) |
@@ -74,7 +74,7 @@ DC prices clear at 4-hour EFA block level. Scenarios are block-averaged to enfor
 
 ## 6. Results
 
-### 6.1 CV Period (2021-01-01 → 2024-12-31)
+### 6.1 CV Period (2021-01-01 -> 2024-12-31)
 
 **Coverage note:** 491 evaluated steps out of ~1,461 calendar days (33.6%). OOF predictions only cover validation windows of the walk-forward CV folds; the remaining dates had no forecast and were skipped. The annualised figures assume the evaluated sample is representative of the full period.
 
@@ -100,7 +100,7 @@ Shared clean-date set: **469 days**
 
 ---
 
-### 6.2 OOS Period (2025-01-01 → 2025-12-31)
+### 6.2 OOS Period (2025-01-01 -> 2025-12-31)
 
 #### Summary metrics
 
@@ -215,8 +215,8 @@ DC clearing prices fell substantially in 2025 as more BESS capacity entered the 
 
 | ID | Description | Hypothesis |
 |---|---|---|
-| Experiment 02 | Vary `N_SCENARIOS` ∈ {1, 5, 10, 20} | Fewer scenarios → less over-hedging → lower degradation → better net revenue |
-| Experiment 03 | Quantile recalibration (isotonic regression post-processing) | Better-calibrated q10/q90 → more appropriate scenario spread → closes gap with median |
+| Experiment 02 | Vary `N_SCENARIOS` ∈ {1, 5, 10, 20} | Fewer scenarios -> less over-hedging -> lower degradation -> better net revenue |
+| Experiment 03 | Quantile recalibration (isotonic regression post-processing) | Better-calibrated q10/q90 -> more appropriate scenario spread -> closes gap with median |
 | Experiment 04 (optional) | Battery duration sensitivity: 1MW/2MWh (0.5C) vs 1MW/1MWh (1C) | Longer duration improves DA margins marginally but will not eliminate structural DA losses |
 
 ---
@@ -238,8 +238,8 @@ These are noted for reproducibility and should be referenced in any methods appe
 **Root cause:** `series.values` in `baselines/scenarios.py:_extract` returns a pandas `FloatingArray` (masked) rather than a plain `np.ndarray` when the source parquet file uses pandas nullable float dtype. `np.isnan()` dispatched to `pandas.arrays.masked.__array_ufunc__` and failed on the shape mismatch.
 
 **Resolution:** Two changes:
-1. `_extract`: changed `return series.values` → `return series.to_numpy(dtype=float, na_value=np.nan)` (forces plain ndarray, converts pandas NA to np.nan)
-2. NaN guard: changed `np.isnan(arr).any()` → `np.isnan(np.asarray(arr, dtype=float)).any()` (defensive; handles any masked-array leakage)
+1. `_extract`: changed `return series.values` -> `return series.to_numpy(dtype=float, na_value=np.nan)` (forces plain ndarray, converts pandas NA to np.nan)
+2. NaN guard: changed `np.isnan(arr).any()` -> `np.isnan(np.asarray(arr, dtype=float)).any()` (defensive; handles any masked-array leakage)
 
 ### 10.3 `dc_low_oos_2025.parquet` not generated after training
 **Root cause:** `df_test_clean = df_test.dropna(subset=cols_needed)` where `cols_needed` included `self.target_col`. DC Low/High target price has NaN in 2025 OOS for auction gap periods, making `df_test_clean` empty.

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from backtest.engine import run_backtest
+from backtest.engine import DEFAULT_OPT_SETTINGS, run_backtest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,7 +131,7 @@ def _log_data_summary(name: str, s: pd.Series | pd.DataFrame) -> None:
     """Log a one-line summary of a loaded series/frame for quick sanity-checking."""
     idx = s.index
     logger.info(
-        "  %-20s  rows=%-6d  %s → %s  tz=%s",
+        "  %-20s  rows=%-6d  %s -> %s  tz=%s",
         name,
         len(s),
         idx.min().date() if len(s) else "N/A",
@@ -153,6 +153,11 @@ def main() -> None:
     parser.add_argument("--step",  type=int, default=1, help="Days per backtest step (default: 1)")
     parser.add_argument("--use-spread-model", action="store_true",
                         help="Use direct BM-DA spread model for scenario construction (BM = DA + spread)")
+    parser.add_argument("--calibrated-spread", action="store_true",
+                        help="Load spread_calibrated_*.parquet instead of spread_*.parquet")
+    parser.add_argument("--n-scenarios", type=int, default=20,
+                        help="Scenarios per day for the Gaussian copula builder")
+
     args = parser.parse_args()
 
     # Enforce period boundaries if not explicitly overridden
@@ -198,7 +203,8 @@ def main() -> None:
     spread_fc = None
     if args.use_spread_model:
         logger.info("Loading spread forecast...")
-        spread_fc = _load_forecast("spread", args.period)
+        spread_model_id = "spread_calibrated" if args.calibrated_spread else "spread"
+        spread_fc = _load_forecast(spread_model_id, args.period)
         _log_data_summary("spread_fc", spread_fc)
 
     logger.info("Forecast data summary:")
@@ -206,6 +212,10 @@ def main() -> None:
     _log_data_summary("bm_fc",      bm_fc)
     _log_data_summary("dc_low_fc",  dc_low_fc)
     _log_data_summary("dc_high_fc", dc_high_fc)
+
+    opt_settings = DEFAULT_OPT_SETTINGS.copy()
+    opt_settings["n_scenarios"] = args.n_scenarios
+
 
     logger.info("Running backtest...")
     results = run_backtest(
@@ -221,6 +231,7 @@ def main() -> None:
         start_date=start_date,
         end_date=end_date,
         spread_forecast=spread_fc,
+        opt_settings=opt_settings,
     )
 
     if results.empty:
@@ -238,7 +249,7 @@ def main() -> None:
     ann   = total / days * 365 if days else 0.0
 
     print(f"\n{'='*50}")
-    print(f"  Backtest: {len(results)} steps  ({results.index.min()} → {results.index.max()})")
+    print(f"  Backtest: {len(results)} steps  ({results.index.min()} -> {results.index.max()})")
     print(f"  {'DA revenue':30s}  £{results['da_revenue'].sum(skipna=True):>10,.0f}")
     print(f"  {'BM revenue':30s}  £{results['bm_revenue'].sum(skipna=True):>10,.0f}")
     print(f"  {'DC Low revenue':30s}  £{results['dc_low_revenue'].sum(skipna=True):>10,.0f}")

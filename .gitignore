@@ -18,6 +18,7 @@ models/
 
 
 session_fixes_and_decisions.md
+changelog.md
 data_diagnostics.ipynb
 data_thorough_check.ipynb
 test_volatility.py

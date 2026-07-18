@@ -138,7 +138,7 @@ def main():
 
     # Save calibrated OOF
     oof_cal.to_parquet(DATA_DIR / "forecasts" / "spread_calibrated_oof_2022_2024.parquet")
-    logger.info("Calibrated OOF → spread_calibrated_oof_2022_2024.parquet  [rolling s, no leakage]")
+    logger.info("Calibrated OOF -> spread_calibrated_oof_2022_2024.parquet  [rolling s, no leakage]")
 
     # OOS: use global s from full OOF (appropriate — OOS is truly held-out)
     s_global = find_scaling_factor(a, q10, q50, q90)
@@ -146,7 +146,7 @@ def main():
     oos_fc = _load_forecast("spread", "oos")
     oos_cal = apply_scaling(oos_fc, s_global)
     oos_cal.to_parquet(DATA_DIR / "forecasts" / "spread_calibrated_oos_2025.parquet")
-    logger.info("Calibrated OOS → spread_calibrated_oos_2025.parquet  [global s from full OOF is valid here]")
+    logger.info("Calibrated OOS -> spread_calibrated_oos_2025.parquet  [global s from full OOF is valid here]")
 
 
 

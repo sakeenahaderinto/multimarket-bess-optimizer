@@ -168,8 +168,8 @@ def test_roundtrip_efficiency_convention():
     """After one charge+discharge cycle the SoC loss should match RTE=0.85, not RTE^2=0.72."""
     import math
 
-    # Negative DA price at t=0 → model earns revenue for charging (pays to take energy).
-    # Positive DA price at t=2 → model earns revenue for discharging.
+    # Negative DA price at t=0 -> model earns revenue for charging (pays to take energy).
+    # Positive DA price at t=2 -> model earns revenue for discharging.
     # t=1 and t=3 have zero price so no throughput incentive (degradation cost keeps them idle).
     scenarios = build_scenarios(n_periods=4, price=0.0)
     scenarios["da"][0, 0] = -100.0
@@ -230,7 +230,7 @@ def test_dc_block_consistency():
     model = build_model(batteries, scenarios, OPT_SETTINGS)
     solve(model)
 
-    # OPT_SETTINGS has dc_efa_block_min_hours=2 → block size = 4 periods (the full horizon)
+    # OPT_SETTINGS has dc_efa_block_min_hours=2 -> block size = 4 periods (the full horizon)
     # Every period must equal period 0
     ref_low  = pyo.value(model.dc_low[0,  "test_bat"])
     ref_high = pyo.value(model.dc_high[0, "test_bat"])

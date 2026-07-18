@@ -61,5 +61,11 @@ class DAPricesForecasterHourly(BaseForecaster):
     target_col = "price"
     feature_cols = DA_HOURLY_FEATURES
 
+    MIN_TRAIN     = 24 * 28  # 28 days of hourly rows
+    FOLD_STEP     = 24 * 7   # refit weekly
+    VAL_WINDOW    = 24 * 7   # 1-week validation window
+    MIN_FOLD_ROWS = 24 * 7   # minimum clean rows per fold
+
+
     def load_features(self) -> pd.DataFrame:
         return pd.read_parquet(settings.data_dir / "features" / "features_da_hourly.parquet")

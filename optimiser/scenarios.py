@@ -165,7 +165,7 @@ def _efa_block_groups(window_start: pd.Timestamp, horizon: int) -> list[tuple[in
         .utcoffset().total_seconds() / 3600
     )
     # First EFA boundary after midnight UTC: 03:00 local = (3 - utc_offset_h) UTC
-    offset = (3 - utc_offset_h) * 2  # periods: GMT→6, BST→4
+    offset = (3 - utc_offset_h) * 2  # periods: GMT->6, BST->4
 
     groups = []
     if offset > 0:
@@ -257,7 +257,7 @@ def sample_scenarios_multimarket(
 
     # Extract forecast quantile arrays, shape (1, horizon) for broadcasting over n
     def _apply_qf(u: np.ndarray, q10: np.ndarray, q50: np.ndarray, q90: np.ndarray) -> np.ndarray:
-        """Piecewise-linear interpolation: u ∈ [0,0.5) → [q10,q50), u ∈ [0.5,1] → [q50,q90]. Output bounded to [q10, q90]."""
+        """Piecewise-linear interpolation: u ∈ [0,0.5) -> [q10,q50), u ∈ [0.5,1] -> [q50,q90]. Output bounded to [q10, q90]."""
         return np.where(
             u < 0.5,
             q10 + (q50 - q10) * (u / 0.5),

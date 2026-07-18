@@ -1,8 +1,9 @@
 import pyomo.environ as pyo
 import numpy as np
 
+from optimiser.scenarios import _efa_block_groups
 
-def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> pyo.ConcreteModel:
+def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, window_start=None) -> pyo.ConcreteModel:
     """
     Build the multi-service battery dispatch MIP.
 
@@ -74,9 +75,10 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
 
     # Scenario-dependent variables
     m.soc       = pyo.Var(m.T_SOC, m.B, m.S, within=pyo.NonNegativeReals)
-    m.bm_offer  = pyo.Var(m.T, m.B, m.S, within=pyo.NonNegativeReals)
+    
 
     # Scenario-independent variables -- committed before uncertainty resolves
+    m.bm_offer  = pyo.Var(m.T, m.B, within=pyo.NonNegativeReals)
     m.da_charge    = pyo.Var(m.T, m.B, within=pyo.NonNegativeReals)
     m.da_discharge = pyo.Var(m.T, m.B, within=pyo.NonNegativeReals)
     m.dc_low       = pyo.Var(m.T, m.B, within=pyo.NonNegativeReals)
@@ -94,10 +96,10 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
 
     def _scenario_net_rev(s):
         da_r   = sum(scenarios["da"][s,t]      * (m.da_discharge[t,b] - m.da_charge[t,b]) * 0.5 for t in T for b in B)
-        bm_r   = sum(scenarios["bm"][s,t]      * m.bm_offer[t,b,s]  * 0.5                        for t in T for b in B)
+        bm_r   = sum(scenarios["bm"][s,t]      * m.bm_offer[t,b]  * 0.5                        for t in T for b in B)
         dcl_r  = sum(scenarios["dc_low"][s,t]  * m.dc_low[t,b]       * 0.5                        for t in T for b in B)
         dch_r  = sum(scenarios["dc_high"][s,t] * m.dc_high[t,b]      * 0.5                        for t in T for b in B)
-        deg_bm = sum(m.bm_offer[t,b,s] * 0.5 * (rep_cost / (2 * bat[b]["design_cycle_life"]))     for t in T for b in B)
+        deg_bm = sum(m.bm_offer[t,b] * 0.5 * (rep_cost / (2 * bat[b]["design_cycle_life"]))     for t in T for b in B)
         deg_da = sum((m.da_charge[t,b] + m.da_discharge[t,b]) * 0.5 * (rep_cost / (2 * bat[b]["design_cycle_life"])) for t in T for b in B)
         return da_r + bm_r + dcl_r + dch_r - deg_bm - deg_da
 
@@ -180,7 +182,7 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
             m.soc[t-1,b,s]
             + ((m.da_charge[t-1,b]     * eta     * 0.5)) / bat[b]["capacity_mwh"]
             - ((m.da_discharge[t-1,b]  * (1/eta) * 0.5)
-            + (m.bm_offer[t-1,b,s]  * (1/eta) * 0.5)) / bat[b]["capacity_mwh"]
+            + (m.bm_offer[t-1,b]  * (1/eta) * 0.5)) / bat[b]["capacity_mwh"]
         )
     m.soc_dynamics = pyo.Constraint(m.T_SOC, m.B, m.S, rule=soc_init)
 
@@ -195,14 +197,14 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
     # DA schedule, real-time dispatch, BM, and DC all draw from the same
     # physical power limit in every scenario.
     # ------------------------------------------------------------------
-    def power_limit(m, t, b, s):
+    def power_limit(m, t, b):
         return (
             (m.da_charge[t,b] + m.da_discharge[t,b])
-            + m.bm_offer[t,b,s]
+            + m.bm_offer[t,b]
             + m.dc_low[t,b] + m.dc_high[t,b]
             <= bat[b]["max_power_mw"]
         )
-    m.power_cap = pyo.Constraint(m.T, m.B, m.S, rule=power_limit)
+    m.power_cap = pyo.Constraint(m.T, m.B, rule=power_limit)
 
 
     def charge_mode_ub(m, t, b):
@@ -211,12 +213,12 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
     def discharge_mode_ub(m, t, b):
         return m.da_discharge[t, b] <= bat[b]["max_power_mw"] * (1 - m.charge_mode[t, b])
     
-    def bm_discharge_mode_ub(m, t, b, s):
-        return m.bm_offer[t, b, s] <= bat[b]["max_power_mw"] * (1 - m.charge_mode[t, b])
+    def bm_discharge_mode_ub(m, t, b):
+        return m.bm_offer[t, b] <= bat[b]["max_power_mw"] * (1 - m.charge_mode[t, b])
 
     m.charge_mode_limit       = pyo.Constraint(m.T, m.B, rule=charge_mode_ub)
     m.discharge_mode_limit    = pyo.Constraint(m.T, m.B, rule=discharge_mode_ub)
-    m.bm_discharge_mode_limit = pyo.Constraint(m.T, m.B, m.S, rule=bm_discharge_mode_ub)
+    m.bm_discharge_mode_limit = pyo.Constraint(m.T, m.B, rule=bm_discharge_mode_ub)
 
 
 
@@ -225,10 +227,22 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict) -> 
     # 4-hour EFA block and cannot change within a block.
     # ------------------------------------------------------------------
 
+    # dc_period_pairs = [
+    #     (t0, t) for t0 in range(0, len(T), dc_block)
+    #     for t in range(t0+1, min(t0 + dc_block, len(T)))
+    # ]
+
+    if window_start is not None:
+        efa_groups = _efa_block_groups(window_start, n_periods)
+    else:
+        efa_groups = [(i, min(i + dc_block, n_periods)) for i in range(0, n_periods, dc_block)]
+
     dc_period_pairs = [
-        (t0, t) for t0 in range(0, len(T), dc_block)
-        for t in range(t0+1, min(t0 + dc_block, len(T)))
+        (blk_start, t)
+        for blk_start, blk_end in efa_groups
+        for t in range(blk_start + 1, blk_end)
     ]
+
 
     def dc_low_block(m, t0, t, b):
         return m.dc_low[t, b] == m.dc_low[t0, b]

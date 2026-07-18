@@ -197,7 +197,7 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
 
         out_path = RESULTS_DIR / f"backtest_{label}.parquet"
         df.to_parquet(out_path)
-        logger.info("  %d rows → %s", len(df), out_path)
+        logger.info("  %d rows -> %s", len(df), out_path)
 
         failure_rate = df["solve_failed"].fillna(True).mean()
         if failure_rate > 0.05:
@@ -238,7 +238,7 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
     csv_path     = RESULTS_DIR / "baseline_comparison.csv"
     comparison.to_parquet(parquet_path)
     comparison.to_csv(csv_path)
-    logger.info("Comparison table → %s and %s", parquet_path, csv_path)
+    logger.info("Comparison table -> %s and %s", parquet_path, csv_path)
 
     # ----------------------------------------------------------------
     # 7. Print summary
@@ -250,7 +250,7 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
     ]
 
     print(f"\n{'='*72}")
-    print(f"  Baseline comparison — {period.upper()}  ({start_date} → {end_date})")
+    print(f"  Baseline comparison — {period.upper()}  ({start_date} -> {end_date})")
     print(f"  Shared clean-date set: {len(clean_dates)} days")
     print(f"{'='*72}")
     print(comparison[display_cols].to_string())

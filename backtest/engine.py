@@ -148,9 +148,7 @@ def settle_revenue(
         bm_p = float(bm_vals[t]) if t < len(bm_vals) else 0.0
 
         
-        bm_mw = sum(
-            pyo.value(model.bm_offer[t, battery_id, s]) for s in range(n_s)
-        ) / n_s
+        bm_mw = pyo.value(model.bm_offer[t, battery_id])
         bm_rev += bm_p * bm_mw * 0.5
 
         dcl_p = float(dcl_vals[t]) if t < len(dcl_vals) else 0.0
@@ -432,7 +430,7 @@ def run_backtest(
 
                 scenarios = sample_scenarios_multimarket(
                     da_fc_win, bm_fc_win, dcl_fc_win, dch_fc_win,
-                    n=N_SCENARIOS,
+                    n=opt_settings.get("n_scenarios", N_SCENARIOS),
                     seed=seed + i,
                     corr_matrix=corr_matrix,
                     spread_fc=spread_fc_win,
@@ -458,7 +456,7 @@ def run_backtest(
             step_battery["current_soc"] = current_soc
 
             batteries = [step_battery]
-            model = build_model(batteries, scenarios, opt_settings)
+            model = build_model(batteries, scenarios, opt_settings, window_start=window_start)
             result = solver.solve(model)
 
             if result.solver.termination_condition != TerminationCondition.optimal:

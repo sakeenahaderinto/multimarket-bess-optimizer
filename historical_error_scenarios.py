@@ -54,7 +54,7 @@ def _compute_da_vol_7d(da_actual: pd.DataFrame, dates: list) -> np.ndarray:
     vols = []
     for d in dates:
         lookback = pd.date_range(
-            end=pd.Timestamp(d, tz="UTC") - pd.Timedelta(minutes=30),
+            end=pd.Timestamp(d, tz="UTC") - pd.Timedelta(hours=13, minutes=30),
             periods=7 * 48,
             freq="30min",
         )
@@ -259,7 +259,7 @@ def make_historical_error_scenario_builder(
         sample_weights = None
         if use_regime and vol_bandwidth is not None:
             lookback = pd.date_range(
-                end=pd.Timestamp(target_date, tz="UTC") - pd.Timedelta(minutes=30),
+                end=pd.Timestamp(target_date, tz="UTC") - pd.Timedelta(hours=13, minutes=30),
                 periods=7 * 48, freq="30min",
             )
             target_window = _col(da_actual).reindex(lookback).dropna()

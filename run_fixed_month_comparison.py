@@ -85,8 +85,8 @@ def make_perfect_foresight_builder(da_actual, bm_actual, dc_low_actual_30, dc_hi
                 f"Missing values: {missing}."
             )
 
-        dcl_vals = _block_avg_1d(dc_low_path.to_numpy(dtype=float), horizon)
-        dch_vals = _block_avg_1d(dc_high_path.to_numpy(dtype=float), horizon)
+        dcl_vals = _block_avg_1d(dc_low_path.to_numpy(dtype=float), horizon, window_start=window_start)
+        dch_vals = _block_avg_1d(dc_high_path.to_numpy(dtype=float), horizon, window_start=window_start)
 
         return {
             "da":      da_path.to_numpy(dtype=float)[np.newaxis, :],
@@ -176,6 +176,13 @@ def main() -> None:
     parser.add_argument("--error-cap-pct", type=float, default=0.95,
                         help="Error magnitude cap percentile for historical error scenarios (0=off, default=0.95)")
 
+    parser.add_argument("--calibrated-spread", action="store_true",
+                        help="Load spread_calibrated_*.parquet instead of spread_*.parquet")
+    parser.add_argument("--n-scenarios", type=int, default=20,
+                        help="Scenarios per day (recommend ≥50 for stable CVaR)")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[42],
+                        help="Random seeds. Multiple seeds -> results averaged.")
+
     args = parser.parse_args()
 
     START_DATE = args.start
@@ -216,7 +223,8 @@ def main() -> None:
     bm_fc      = _load_forecast("bm",      PERIOD)
     dc_low_fc  = _load_forecast("dc_low",  PERIOD)
     dc_high_fc = _load_forecast("dc_high", PERIOD)
-    spread_fc  = _load_forecast("spread",  PERIOD)
+    spread_model_id = "spread_calibrated" if args.calibrated_spread else "spread"
+    spread_fc  = _load_forecast(spread_model_id, PERIOD)
 
     # ------------------------------------------------------------------
     # 3. Build the historical error-path pool (Phase 2)
@@ -234,23 +242,23 @@ def main() -> None:
     # 4. Define all four cases
     # ------------------------------------------------------------------
     _hist_builder = make_historical_error_scenario_builder(
-        error_pool, n=20, da_actual=da_actual_30, recency_halflife=90,
+        error_pool, n=args.n_scenarios, da_actual=da_actual_30, recency_halflife=90,
         error_cap_pct=args.error_cap_pct,
     )
 
     strategies = [
-        # ("perfect_foresight", make_perfect_foresight_builder(
-        #     da_actual_30, bm_actual, dc_low_30, dc_high_30), None, None),
+        ("perfect_foresight", make_perfect_foresight_builder(
+            da_actual_30, bm_actual, dc_low_30, dc_high_30), None, None),
         ("median",                       build_median_scenario, None, None),
-        # ("current_scenarios",          None, None, None),
+        ("current_scenarios",          None, None, None),
         ("historical_error_scenarios",   _hist_builder, None, None),
-        # ("q50_anchor_1",  make_q50_anchored_builder(_hist_builder, anchor_count=1),  None, None),
-        # ("q50_anchor_5",  make_q50_anchored_builder(_hist_builder, anchor_count=5),  None, None),
-        # ("q50_anchor_10", make_q50_anchored_builder(_hist_builder, anchor_count=10), None, None),
+        ("q50_anchor_1",  make_q50_anchored_builder(_hist_builder, anchor_count=1),  None, None),
+        ("q50_anchor_5",  make_q50_anchored_builder(_hist_builder, anchor_count=5),  None, None),
+        ("q50_anchor_10", make_q50_anchored_builder(_hist_builder, anchor_count=10), None, None),
         ("cvar_l07_a09",  _hist_builder, None, {"cvar_alpha": 0.9, "cvar_lambda": 0.7}),
         ("cvar_l05_a09",  _hist_builder, None, {"cvar_alpha": 0.9, "cvar_lambda": 0.5}),
         ("cvar_l05_a08",  _hist_builder, None, {"cvar_alpha": 0.8, "cvar_lambda": 0.5}),
-        # ("spread_scenarios", None, spread_fc, None),
+        ("spread_scenarios", None, spread_fc, None),
     ]
 
 
@@ -266,8 +274,10 @@ def main() -> None:
         dc_high_forecast=dc_high_fc,
         start_date=START_DATE,
         end_date=END_DATE,
-        seed=42,
     )
+
+    base_settings = DEFAULT_OPT_SETTINGS.copy()
+    base_settings["n_scenarios"] = args.n_scenarios
 
     # ------------------------------------------------------------------
     # 4. Run each strategy
@@ -277,21 +287,36 @@ def main() -> None:
 
     for label, builder, sf, extra_settings in strategies:
         logger.info("Running strategy: %s ...", label)
-        eff_settings = DEFAULT_OPT_SETTINGS.copy()
+        eff_settings = base_settings.copy()
         if extra_settings:
             eff_settings.update(extra_settings)
-        df = run_backtest(**shared_kwargs, scenario_builder=builder, spread_forecast=sf, opt_settings=eff_settings)
 
+        per_seed_dfs = []
+        for seed in args.seeds:
+            df = run_backtest(**shared_kwargs, seed=seed,
+                            scenario_builder=builder, spread_forecast=sf,
+                            opt_settings=eff_settings)
+            if not df.empty:
+                per_seed_dfs.append(df)
 
-        if df.empty:
+        if not per_seed_dfs:
             logger.warning("No results for '%s' — skipping.", label)
             continue
 
-        out_path = OUTPUT_DIR / f"backtest_{label}.parquet"
-        df.to_parquet(out_path)
-        logger.info("  %d rows -> %s", len(df), out_path)
+        if len(per_seed_dfs) == 1:
+            result_df = per_seed_dfs[0]
+        else:
+            result_df = per_seed_dfs[0].copy()
+            for col in ["net_revenue", "da_revenue", "bm_revenue",
+                        "dc_low_revenue", "dc_high_revenue", "degradation_cost"]:
+                if col in result_df.columns:
+                    result_df[col] = np.mean([d[col].values for d in per_seed_dfs], axis=0)
 
-        all_results[label] = df
+        out_path = OUTPUT_DIR / f"backtest_{label}.parquet"
+        result_df.to_parquet(out_path)
+        logger.info("  %d rows -> %s", len(result_df), out_path)
+        all_results[label] = result_df
+
 
     # ------------------------------------------------------------------
     # 5. Build and print comparison table

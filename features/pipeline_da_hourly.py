@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Study period -- same bounds as the main pipeline, for consistency
 # ---------------------------------------------------------------------------
-STUDY_START = "2021-01-01"
+STUDY_START = "2022-01-01"
 STUDY_END   = "2025-12-31"
 DA_FORWARD_FILL_LIMIT_HOURS = 48  # was 96 half-hours (48h) in the 30-min pipeline
 

@@ -6,7 +6,7 @@ def add_cyclical_time(df: pd.DataFrame) -> pd.DataFrame:
     Adds cyclical time features to the DataFrame.
 
     Uses fractional hour (hour + minute/60) so that half-hourly settlement
-    periods are correctly distinguished — e.g. 10:00 → 10.0, 10:30 → 10.5.
+    periods are correctly distinguished — e.g. 10:00 -> 10.0, 10:30 -> 10.5.
 
     Inputs:
         df: DataFrame with a 30-minute DatetimeIndex.

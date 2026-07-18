@@ -79,6 +79,11 @@ class BaseForecaster:
     target_col: str
     feature_cols: list[str]
 
+    MIN_TRAIN = 48 * 28 
+    FOLD_STEP = 48 * 7       
+    VAL_WINDOW = 48 * 7          
+    MIN_FOLD_ROWS = 48 * 7   
+
     def load_features(self) -> pd.DataFrame:
         return pd.read_parquet(settings.data_dir / "features" / "features.parquet")
 
@@ -196,15 +201,15 @@ class BaseForecaster:
         oof_timestamps = []
 
         folds_run = folds_skipped = 0
-        fold_ends = range(MIN_TRAIN, len(df) - VAL_WINDOW, FOLD_STEP)
+        fold_ends = range(self.MIN_TRAIN, len(df) - self.VAL_WINDOW, self.FOLD_STEP)
         total_folds = len(fold_ends)
         t0 = time.time()
 
         for i, fold_end in enumerate(fold_ends):
             train_slice = df.iloc[:fold_end].dropna(subset=cols_needed)
-            val_slice = df.iloc[fold_end : fold_end + VAL_WINDOW].dropna(subset=cols_needed)
+            val_slice = df.iloc[fold_end : fold_end + self.VAL_WINDOW].dropna(subset=cols_needed)
 
-            if len(train_slice) < MIN_FOLD_ROWS or len(val_slice) == 0:
+            if len(train_slice) < self.MIN_FOLD_ROWS or len(val_slice) == 0:
                 folds_skipped += 1
                 continue
 
@@ -389,6 +394,9 @@ class BaseForecaster:
         for lag_col in [c for c in self.feature_cols if re.search(r"_lag_\d+$", c)]:
             match = re.search(r"_lag_(\d+)$", lag_col)
             lag_n = int(match.group(1))
+            if lag_n == 48:
+                # _lag_48 uses gate-origin (10:30 D-1), not shift(48) — shift check does not apply
+                continue
             source_col = lag_col[:match.start()]
             if source_col in df.columns:
                 self._check_lag_alignment(df, target=source_col, lag_col=lag_col, lag_n=lag_n)

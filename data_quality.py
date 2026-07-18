@@ -61,9 +61,9 @@ def _compute_fill_steps(raw: pd.Series, canonical_index: pd.DatetimeIndex) -> pd
     """
     Return how many forward-fill steps were applied to each canonical slot.
 
-    fill_steps == 0  → slot had an observed raw value
-    fill_steps == 1  → :30 slot filled from the preceding :00 (expected frequency alignment)
-    fill_steps >  1  → slot filled across a genuine data gap (imputation)
+    fill_steps == 0  -> slot had an observed raw value
+    fill_steps == 1  -> :30 slot filled from the preceding :00 (expected frequency alignment)
+    fill_steps >  1  -> slot filled across a genuine data gap (imputation)
 
     Note: fill_steps are computed without a limit cap so all gaps are
     measured. Slots that fall beyond DA_FORWARD_FILL_LIMIT are NaN in the
@@ -111,7 +111,7 @@ def run_audit() -> None:
         tz="UTC",
     )
     logger.info(
-        "Canonical index: %s → %s (%d slots)",
+        "Canonical index: %s -> %s (%d slots)",
         canonical_index[0],
         canonical_index[-1],
         len(canonical_index),

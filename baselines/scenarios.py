@@ -46,16 +46,24 @@ def _col(df: pd.DataFrame) -> pd.Series:
     return df["value"] if "value" in df.columns else df.iloc[:, 0]
 
 
-def _block_avg_1d(arr: np.ndarray, horizon: int) -> np.ndarray:
+def _block_avg_1d(arr: np.ndarray, horizon: int, window_start=None) -> np.ndarray:
     """
-    Average within each 4-hour EFA block and tile back to half-hourly resolution.
+    Average within each EFA block and tile back to half-hourly resolution.
 
-    Ensures DC scenario prices are block-constant, matching the market structure
-    where a single clearing price applies to all 8 periods within a block.
-    Requires horizon % 8 == 0 (enforced by the horizon guard in scenarios.py).
+    If window_start is provided, uses EFA block boundaries (first boundary
+    after midnight is period 6 in GMT, period 4 in BST). Otherwise falls back
+    to midnight-aligned 8-period blocks.
     """
-    n_blocks = horizon // 8
-    return np.repeat(arr.reshape(n_blocks, 8).mean(axis=1), 8)
+    if window_start is not None:
+        from optimiser.scenarios import _efa_block_groups
+        groups = _efa_block_groups(window_start, horizon)
+    else:
+        groups = [(i, min(i + 8, horizon)) for i in range(0, horizon, 8)]
+    result = np.empty_like(arr, dtype=float)
+    for blk_start, blk_end in groups:
+        result[blk_start:blk_end] = arr[blk_start:blk_end].mean()
+    return result
+
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +99,8 @@ def build_median_scenario(
 
     da_q50  = da_fc_win["q50"].values[:horizon]
     bm_q50  = bm_fc_win["q50"].values[:horizon]
-    dcl_q50 = _block_avg_1d(dc_low_fc_win["q50"].values[:horizon],  horizon)
-    dch_q50 = _block_avg_1d(dc_high_fc_win["q50"].values[:horizon], horizon)
+    dcl_q50 = _block_avg_1d(dc_low_fc_win["q50"].values[:horizon],  horizon, window_start=window_start)
+    dch_q50 = _block_avg_1d(dc_high_fc_win["q50"].values[:horizon], horizon, window_start=window_start)
 
     return {
         "da":      da_q50[np.newaxis, :],
@@ -122,8 +130,8 @@ def make_naive_scenario_builder(
     realised price at (window_start - lag_offset + t * 30min), where
     lag_offset = lag_periods * 30 minutes.
 
-    lag_periods=48  → previous-day baseline (24 hours back)
-    lag_periods=336 → previous-week baseline (168 hours back)
+    lag_periods=48  -> previous-day baseline (24 hours back)
+    lag_periods=336 -> previous-week baseline (168 hours back)
 
     The returned callable has the standard scenario_builder signature so it
     can be passed directly to run_backtest as `scenario_builder=...`.
@@ -191,8 +199,8 @@ def make_naive_scenario_builder(
         # DC actual prices already clear at block level (forward-filled EFA blocks
         # in the pipeline), but block-average for safety to ensure strict block
         # constancy in the scenario — same treatment as build_median_scenario.
-        dcl_vals = _block_avg_1d(dcl_vals, horizon)
-        dch_vals = _block_avg_1d(dch_vals, horizon)
+        dcl_vals = _block_avg_1d(dcl_vals, horizon, window_start=window_start)
+        dch_vals = _block_avg_1d(dch_vals, horizon, window_start=window_start)
 
         return {
             "da":      da_vals[np.newaxis, :],

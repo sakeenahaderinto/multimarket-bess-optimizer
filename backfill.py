@@ -28,9 +28,9 @@ async def backfill_day_ahead() -> None:
                 data = response.json()
                 records = data.get("data", [data] if "value" in data else [])
                 all_records.extend(records)
-                print(f"Day-ahead: {current} → {chunk_end} ({len(records)} rows)")
+                print(f"Day-ahead: {current} -> {chunk_end} ({len(records)} rows)")
             except Exception as e:
-                print(f"Day-ahead: {current} → {chunk_end} failed — {e}")
+                print(f"Day-ahead: {current} -> {chunk_end} failed — {e}")
             current += timedelta(days=10)
             await asyncio.sleep(0.5)
     df = pd.DataFrame(all_records)
