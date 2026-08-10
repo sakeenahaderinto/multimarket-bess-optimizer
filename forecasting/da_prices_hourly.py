@@ -66,6 +66,8 @@ class DAPricesForecasterHourly(BaseForecaster):
     VAL_WINDOW    = 24 * 7   # 1-week validation window
     MIN_FOLD_ROWS = 24 * 7   # minimum clean rows per fold
 
+    GATE_ORIGIN_COLS: frozenset = frozenset()  # all lags are real shifts at hourly resolution
+
 
     def load_features(self) -> pd.DataFrame:
         return pd.read_parquet(settings.data_dir / "features" / "features_da_hourly.parquet")

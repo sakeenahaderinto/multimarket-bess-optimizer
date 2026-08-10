@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from config import settings
+from features.lag_features import FORECAST_GATE_OFFSET
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,18 @@ class BaseForecaster:
     target_col: str
     feature_cols: list[str]
 
-    MIN_TRAIN = 48 * 28 
-    FOLD_STEP = 48 * 7       
-    VAL_WINDOW = 48 * 7          
-    MIN_FOLD_ROWS = 48 * 7   
+    MIN_TRAIN = 48 * 28
+    FOLD_STEP = 48 * 7
+    VAL_WINDOW = 48 * 7
+    MIN_FOLD_ROWS = 48 * 7
+
+    GATE_ORIGIN_COLS: frozenset = frozenset({
+        "demand_lag_48",
+        "price_lag_48",
+        "bm_imbalance_volume_lag_48",
+        "wind_change_lag_48",
+        "spread_lag_48",
+    })
 
     def load_features(self) -> pd.DataFrame:
         return pd.read_parquet(settings.data_dir / "features" / "features.parquet")
@@ -206,7 +215,12 @@ class BaseForecaster:
         t0 = time.time()
 
         for i, fold_end in enumerate(fold_ends):
-            train_slice = df.iloc[:fold_end].dropna(subset=cols_needed)
+            # Cut training at the forecast origin (gate close) of the first validation day.
+            # A fold boundary at midnight D would otherwise include D-1 actual prices
+            # from 11:00–23:30 D-1, which were not available at the 11:00 D-1 decision time.
+            first_val_ts = df.index[fold_end]
+            forecast_origin = first_val_ts.normalize() - FORECAST_GATE_OFFSET
+            train_slice = df[df.index < forecast_origin].dropna(subset=cols_needed)
             val_slice = df.iloc[fold_end : fold_end + self.VAL_WINDOW].dropna(subset=cols_needed)
 
             if len(train_slice) < self.MIN_FOLD_ROWS or len(val_slice) == 0:
@@ -394,8 +408,8 @@ class BaseForecaster:
         for lag_col in [c for c in self.feature_cols if re.search(r"_lag_\d+$", c)]:
             match = re.search(r"_lag_(\d+)$", lag_col)
             lag_n = int(match.group(1))
-            if lag_n == 48:
-                # _lag_48 uses gate-origin (10:30 D-1), not shift(48) — shift check does not apply
+            if lag_col in self.GATE_ORIGIN_COLS:
+                # gate-origin columns use a fixed daily lookup, not shift(lag_n) — skip exact-shift check
                 continue
             source_col = lag_col[:match.start()]
             if source_col in df.columns:
@@ -403,11 +417,15 @@ class BaseForecaster:
 
         logger.info("Lag alignment checks passed.")
 
-        df_train_val = df[df.index < TEST_START_DATE].copy()
-        df_test = df[df.index >= TEST_START_DATE].copy()
+        oos_start = pd.Timestamp(TEST_START_DATE, tz=df.index.tz)
+        oos_forecast_origin = oos_start.normalize() - FORECAST_GATE_OFFSET
+        df_train_val = df[df.index < oos_forecast_origin].copy()
+        df_test = df[df.index >= oos_start].copy()
         logger.info(
-            "Split: train_val=%d rows (up to %s), test=%d rows (from %s onwards)",
-            len(df_train_val), TRAIN_END_DATE, len(df_test), TEST_START_DATE,
+            "Split: train_val=%d rows (cutoff %s = gate close for OOS start %s), "
+            "test=%d rows (from %s onwards)",
+            len(df_train_val), oos_forecast_origin, TEST_START_DATE,
+            len(df_test), TEST_START_DATE,
         )
 
         models, oof_df = self.train(df_train_val)

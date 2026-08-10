@@ -135,8 +135,14 @@ def build_error_path_pool(
 
     da_paths  = _stack(da_err)
     bm_paths  = _stack(bm_err)
-    dcl_paths = np.stack([_block_avg_1d(row, 48) for row in _stack(dcl_err)])
-    dch_paths = np.stack([_block_avg_1d(row, 48) for row in _stack(dch_err)])
+    dcl_paths = np.stack([
+        _block_avg_1d(row, 48, window_start=pd.Timestamp(d, tz="UTC"))
+        for row, d in zip(_stack(dcl_err), valid_dates)
+    ])
+    dch_paths = np.stack([
+        _block_avg_1d(row, 48, window_start=pd.Timestamp(d, tz="UTC"))
+        for row, d in zip(_stack(dch_err), valid_dates)
+    ])
 
     da_vol_7d = _compute_da_vol_7d(da_actual, valid_dates)
 
@@ -226,13 +232,15 @@ def make_historical_error_scenario_builder(
 
 
 
-        available = np.where(error_pool["dates"] < target_date)[0]
-        if len(available) < n:
+        available = np.where(
+            np.array([(target_date - d).days >= 2 for d in error_pool["dates"]])
+        )[0]
+        MIN_POOL_SIZE = 30
+        if len(available) < MIN_POOL_SIZE:
             raise ValueError(
-                f"Only {len(available)} error-path days available before "
-                f"{target_date} (need at least n={n}). Start date is too early "
-                "in the error pool's coverage. Consider a later backtest start "
-                "date or reduce n."
+                f"Only {len(available)} unique error-path days available before "
+                f"{target_date} (need at least {MIN_POOL_SIZE}). Start date is too early "
+                "in the error pool's coverage. Consider a later backtest start date."
             )
         
         # Bandwidth from available pool only — no leakage of future vol distribution
@@ -287,8 +295,10 @@ def make_historical_error_scenario_builder(
                     # Effective sample size
                     ess = 1.0 / float(np.sum(raw_weights ** 2))
 
-                    # ESS guard: blend with uniform if over-concentrated
-                    ess_threshold = float(n)
+                    # ESS guard: blend with uniform if over-concentrated.
+                    # Cap at half the available pool — when the pool is small, ESS
+                    # is naturally bounded below n and the threshold must reflect that.
+                    ess_threshold = min(float(n), len(available) * 0.5)
                     if ess < ess_threshold:
                         alpha = ess / ess_threshold
                         uniform_w = np.ones(len(available)) / len(available)

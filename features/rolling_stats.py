@@ -1,5 +1,7 @@
 import pandas as pd
 
+from features.lag_features import FORECAST_GATE_OFFSET
+
 
 def _check_required_columns(df: pd.DataFrame, required: list, source: str) -> None:
     missing = [c for c in required if c not in df.columns]
@@ -14,38 +16,33 @@ def add_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds rolling mean and standard deviation features for demand and price.
 
-    Each series is shifted by 48 periods (24 hours) before the rolling window
-    is applied, so the window only uses information at least 24 hours old.
-    This prevents any look-ahead leakage.
+    All rolling statistics are pinned to the gate-origin timestamp (10:30 D-1)
+    for each delivery day D. The rolling window is computed on the full raw
+    series first (giving a value at every 30-min timestamp), then reindexed
+    to 10:30 D-1. That single value is assigned to all 48 periods of day D.
+
+    This ensures no period of day D can see data from after gate closure,
+    regardless of where it falls within the delivery day. The previous
+    shift(48) approach was clean only for periods 0-21; periods 22-47 used
+    data up to 13 hours after gate closure.
 
     Rolling windows and their calendar equivalents at 30-min resolution:
         Window 8   =  4 hours  (8  x 30 min)
         Window 48  = 24 hours  (48 x 30 min)
         Window 336 =  7 days   (336 x 30 min)
-
-    Inputs:
-        df: DataFrame with a 30-minute DatetimeIndex and columns
-            ['demand', 'price'].
-    Outputs:
-        df with rolling mean and std columns added for each window.
     """
     if not isinstance(df.index, pd.DatetimeIndex):
         raise ValueError("The DataFrame index must be a DatetimeIndex.")
 
     _check_required_columns(df, ["demand", "price"], "add_rolling_features")
 
-    # Window sizes and their calendar equivalents at 30-min resolution
-    rolling_windows = [
-        (8,   "4 hours"),
-        (48,  "24 hours / 1 day"),
-        (336, "7 days / 1 week"),
-    ]
+    gate_times = df.index.normalize() - FORECAST_GATE_OFFSET
 
-    for window, _ in rolling_windows:
-        # shift(48) applied before rolling: window only uses data ≥24 hours old
-        df[f"demand_roll_mean_{window}"] = df["demand"].shift(48).rolling(window=window, min_periods=window//2).mean()
-        df[f"demand_roll_std_{window}"]  = df["demand"].shift(48).rolling(window=window, min_periods=window//2).std()
-        df[f"price_roll_mean_{window}"]  = df["price"].shift(48).rolling(window=window, min_periods=window//2).mean()
-        df[f"price_roll_std_{window}"]   = df["price"].shift(48).rolling(window=window, min_periods=window//2).std()
+    for window in [8, 48, 336]:
+        for col in ["demand", "price"]:
+            roll_mean = df[col].rolling(window=window, min_periods=window // 2).mean()
+            roll_std  = df[col].rolling(window=window, min_periods=window // 2).std()
+            df[f"{col}_roll_mean_{window}"] = roll_mean.reindex(gate_times).values
+            df[f"{col}_roll_std_{window}"]  = roll_std.reindex(gate_times).values
 
     return df

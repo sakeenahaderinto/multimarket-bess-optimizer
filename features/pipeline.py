@@ -60,6 +60,7 @@ def build_features() -> None:
 
     weather_df = weather_df.set_index("date").sort_index()
     weather_df.index = pd.to_datetime(weather_df.index, utc=True)
+    weather_df = weather_df[~weather_df.index.duplicated(keep="last")]
 
     dc_df["delivery_start"] = pd.to_datetime(dc_df["delivery_start"], utc=True)
     dc_df = dc_df.set_index("delivery_start").sort_index()

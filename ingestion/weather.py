@@ -37,5 +37,6 @@ def fetch_weather() -> None:
         data[var_name] = hourly.Variables(i).ValuesAsNumpy()
     df = pd.DataFrame(data)
     output_path = settings.data_dir / "raw" / "weather" / f"weather_{datetime.now(UTC).strftime('%Y%m%d%H')}.parquet"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, engine="pyarrow")
     logger.info("Weather data saved to %s", output_path)

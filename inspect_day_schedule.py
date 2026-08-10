@@ -24,7 +24,6 @@ from backtest.engine import (
     DEFAULT_OPT_SETTINGS,
     HORIZON,
     SETTLE_PERIODS,
-    N_SCENARIOS,
     _normalise_to_30min,
 )
 from optimiser.model import build_model
@@ -38,7 +37,8 @@ from historical_error_scenarios import build_error_path_pool, make_historical_er
 # Target day — perfect_foresight's worst DA day from the Dec 2022 comparison
 # ---------------------------------------------------------------------------
 TARGET_DATE = "2022-12-15"
-PERIOD = "cv"  # Dec 2022 falls in the CV/OOF forecast period
+PERIOD = "cv"          # Dec 2022 falls in the CV/OOF forecast period
+N_INSPECT_SCENARIOS = 50  # match --n-scenarios used in the comparison run
 
 # current_soc going into this day: ideally read off the previous day's
 # ending SOC from a full run, but for a one-off inspection like this,
@@ -60,7 +60,6 @@ def _solve_and_extract(model, battery_id, da_win, bm_win, window_start, label):
         print(f"[{label}] Solve failed: {result.solver.termination_condition}")
         return None
 
-    n_s = len(model.S)
     idx = pd.date_range(window_start, periods=SETTLE_PERIODS, freq="30min", tz=window_start.tzinfo)
     da_vals = da_win["value"].iloc[:SETTLE_PERIODS].to_numpy()
     bm_vals = bm_win["value"].iloc[:SETTLE_PERIODS].to_numpy()
@@ -69,8 +68,8 @@ def _solve_and_extract(model, battery_id, da_win, bm_win, window_start, label):
     for t in range(SETTLE_PERIODS):
         da_d = pyo.value(model.da_discharge[t, battery_id])
         da_c = pyo.value(model.da_charge[t, battery_id])
-        bm_mw = sum(pyo.value(model.bm_offer[t, battery_id, s]) for s in range(n_s)) / n_s
-        soc = sum(pyo.value(model.soc[t, battery_id, s]) for s in range(n_s)) / n_s
+        bm_mw = pyo.value(model.bm_offer[t, battery_id])
+        soc = pyo.value(model.soc[t, battery_id])
 
         rows.append({
             "datetime": idx[t],
@@ -129,7 +128,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     pf_builder = make_perfect_foresight_builder(da_actual_30, bm_actual, dc_low_30, dc_high_30)
     pf_scenarios = pf_builder(window_start, HORIZON, None, None, None, None, seed=42)
-    pf_model = build_model([dict(battery)], pf_scenarios, DEFAULT_OPT_SETTINGS)
+    pf_model = build_model([dict(battery)], pf_scenarios, DEFAULT_OPT_SETTINGS, window_start=window_start)
     pf_schedule = _solve_and_extract(pf_model, battery_id, da_win, bm_win, window_start, "perfect_foresight")
 
     # ------------------------------------------------------------------
@@ -140,11 +139,11 @@ def main() -> None:
     corr_matrix = _estimate_correlation_matrix(cutoff_date=str(window_start.date()))
     cs_scenarios = sample_scenarios_multimarket(
         da_fc_win, bm_fc_win, dcl_fc_win, dch_fc_win,
-        n=N_SCENARIOS,
+        n=N_INSPECT_SCENARIOS,
         seed=42,
         corr_matrix=corr_matrix,
     )
-    cs_model = build_model([dict(battery)], cs_scenarios, DEFAULT_OPT_SETTINGS)
+    cs_model = build_model([dict(battery)], cs_scenarios, DEFAULT_OPT_SETTINGS, window_start=window_start)
     cs_schedule = _solve_and_extract(cs_model, battery_id, da_win, bm_win, window_start, "current_scenarios")
 
     # ------------------------------------------------------------------
@@ -156,9 +155,9 @@ def main() -> None:
         da_actual_30, bm_actual, dc_low_30, dc_high_30,
         da_fc, bm_fc, dcl_fc, dch_fc,
     )
-    he_builder = make_historical_error_scenario_builder(error_pool, n=N_SCENARIOS)
+    he_builder = make_historical_error_scenario_builder(error_pool, n=N_INSPECT_SCENARIOS)
     he_scenarios = he_builder(window_start, HORIZON, da_fc_win, bm_fc_win, dcl_fc_win, dch_fc_win, seed=42)
-    he_model = build_model([dict(battery)], he_scenarios, DEFAULT_OPT_SETTINGS)
+    he_model = build_model([dict(battery)], he_scenarios, DEFAULT_OPT_SETTINGS, window_start=window_start)
     he_schedule = _solve_and_extract(he_model, battery_id, da_win, bm_win, window_start, "historical_error_scenarios")
 
     # ------------------------------------------------------------------
@@ -170,7 +169,7 @@ def main() -> None:
     print("\n=== seed sensitivity: historical_error_scenarios on 2022-12-15 ===")
     for seed in [0, 1, 7, 42, 99, 123]:
         seed_scenarios = he_builder(window_start, HORIZON, da_fc_win, bm_fc_win, dcl_fc_win, dch_fc_win, seed=seed)
-        seed_model = build_model([dict(battery)], seed_scenarios, DEFAULT_OPT_SETTINGS)
+        seed_model = build_model([dict(battery)], seed_scenarios, DEFAULT_OPT_SETTINGS, window_start=window_start)
         seed_schedule = _solve_and_extract(
             seed_model, battery_id, da_win, bm_win, window_start, f"he_seed_{seed}"
         )

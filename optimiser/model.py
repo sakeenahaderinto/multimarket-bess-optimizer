@@ -16,8 +16,6 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
     Scenario-independent (committed before uncertainty resolves):
         da_charge, da_discharge  -- day-ahead physical schedule (MW)
         dc_low, dc_high          -- DC capacity committed per EFA block (MW)
-
-    Scenario-dependent (decided after uncertainty resolves):
         bm_offer                 -- BM dispatch accepted by ESO (MW)
         soc                      -- state of charge (fraction of capacity)
 
@@ -64,8 +62,14 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
     dc_block = dc_min_h * 2  # number of 30-min periods per EFA block
     dc_response_duration_h = float(settings_dict.get("dc_response_duration_h", 0.5))
     cvar_alpha  = float(settings_dict.get("cvar_alpha",  1.0))
-    cvar_lambda = float(settings_dict.get("cvar_lambda", 1.0))
-    use_cvar    = cvar_lambda < 1.0
+    mean_weight = float(settings_dict.get("mean_weight", 1.0))
+    use_cvar    = mean_weight < 1.0
+
+    if use_cvar:
+        if not (0.0 < cvar_alpha < 1.0):
+            raise ValueError(f"cvar_alpha must be in (0, 1), got {cvar_alpha}")
+        if not (0.0 <= mean_weight <= 1.0):
+            raise ValueError(f"mean_weight must be in [0, 1], got {mean_weight}")
 
 
     m.T = pyo.Set(initialize=T)
@@ -74,7 +78,7 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
     m.S = pyo.Set(initialize=S)
 
     # Scenario-dependent variables
-    m.soc       = pyo.Var(m.T_SOC, m.B, m.S, within=pyo.NonNegativeReals)
+    m.soc = pyo.Var(m.T_SOC, m.B, within=pyo.NonNegativeReals)
     
 
     # Scenario-independent variables -- committed before uncertainty resolves
@@ -154,7 +158,7 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
         if not use_cvar:
             return mean_rev
         cvar = m.eta - (1.0 / ((1.0 - cvar_alpha) * n_s)) * sum(m.shortfall[s] for s in S)
-        return cvar_lambda * mean_rev + (1.0 - cvar_lambda) * cvar
+        return mean_weight * mean_rev + (1.0 - mean_weight) * cvar
 
 
     m.obj = pyo.Objective(rule=revenue, sense=pyo.maximize)
@@ -172,25 +176,25 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
     # Discharging at eta < 1 removes more stored energy than delivered.
     # All physical activity (DA, real-time, BM) affects SoC.
     # ------------------------------------------------------------------
-    def soc_init(m, t, b, s):
+    def soc_init(m, t, b):
         if t == 0:
-            return m.soc[t,b,s] == bat[b]["current_soc"]
+            return m.soc[t,b] == bat[b]["current_soc"]
         # One-way efficiency per side so that eta_one_way^2 = round_trip_efficiency.
         # Applying the full RTE value to both sides would give RTE^2 effective efficiency.
         eta = bat[b].get("round_trip_efficiency", 0.85) ** 0.5
-        return m.soc[t,b,s] == (
-            m.soc[t-1,b,s]
+        return m.soc[t,b] == (
+            m.soc[t-1,b]
             + ((m.da_charge[t-1,b]     * eta     * 0.5)) / bat[b]["capacity_mwh"]
             - ((m.da_discharge[t-1,b]  * (1/eta) * 0.5)
             + (m.bm_offer[t-1,b]  * (1/eta) * 0.5)) / bat[b]["capacity_mwh"]
         )
-    m.soc_dynamics = pyo.Constraint(m.T_SOC, m.B, m.S, rule=soc_init)
+    m.soc_dynamics = pyo.Constraint(m.T_SOC, m.B, rule=soc_init)
 
     # Hard SoC bounds
-    def soc_lb(m, t, b, s): return m.soc[t,b,s] >= 0.1
-    def soc_ub(m, t, b, s): return m.soc[t,b,s] <= 0.9
-    m.soc_lower = pyo.Constraint(m.T_SOC, m.B, m.S, rule=soc_lb)
-    m.soc_upper = pyo.Constraint(m.T_SOC, m.B, m.S, rule=soc_ub)
+    def soc_lb(m, t, b): return m.soc[t,b] >= 0.1
+    def soc_ub(m, t, b): return m.soc[t,b] <= 0.9
+    m.soc_lower = pyo.Constraint(m.T_SOC, m.B, rule=soc_lb)
+    m.soc_upper = pyo.Constraint(m.T_SOC, m.B, rule=soc_ub)
 
     # ------------------------------------------------------------------
     # Power capacity -- all simultaneous uses cannot exceed rated power.
@@ -277,24 +281,24 @@ def build_model(batteries: list[dict], scenarios: dict, settings_dict: dict, win
     # ------------------------------------------------------------------
 
     
-    def dc_soc_headroom_lb(m, t, b, s):
+    def dc_soc_headroom_lb(m, t, b):
         eta = bat[b].get("round_trip_efficiency", 0.85) ** 0.5
-        return m.soc[t,b,s] >= 0.1 + (m.dc_low[t,b] * dc_response_duration_h) / (eta * bat[b]["capacity_mwh"])
+        return m.soc[t,b] >= 0.1 + (m.dc_low[t,b] * dc_response_duration_h) / (eta * bat[b]["capacity_mwh"])
 
-    def dc_soc_headroom_ub(m, t, b, s):
+    def dc_soc_headroom_ub(m, t, b):
         eta = bat[b].get("round_trip_efficiency", 0.85) ** 0.5
-        return m.soc[t,b,s] <= 0.9 - (m.dc_high[t,b] * dc_response_duration_h * eta) / bat[b]["capacity_mwh"]
+        return m.soc[t,b] <= 0.9 - (m.dc_high[t,b] * dc_response_duration_h * eta) / bat[b]["capacity_mwh"]
 
-    m.dc_soc_lower = pyo.Constraint(m.T, m.B, m.S, rule=dc_soc_headroom_lb)
-    m.dc_soc_upper = pyo.Constraint(m.T, m.B, m.S, rule=dc_soc_headroom_ub)
+    m.dc_soc_lower = pyo.Constraint(m.T, m.B, rule=dc_soc_headroom_lb)
+    m.dc_soc_upper = pyo.Constraint(m.T, m.B, rule=dc_soc_headroom_ub)
 
     terminal_soc_min = float(settings_dict.get("terminal_soc_min", 0.1))
     # Terminal SoC -- prevent end-of-horizon battery depletion.
     # Uses a configurable floor (terminal_soc_min) rather than initial SoC,
     # allowing profitable discharge across the horizon without forcing the
     # battery back to its initial state.
-    def terminal_soc(m, b, s):
-        return m.soc[len(T_SOC)-1, b, s] >= terminal_soc_min # prevents end-of-horizon depletion
-    m.terminal_soc = pyo.Constraint(m.B, m.S, rule=terminal_soc)
+    def terminal_soc(m, b):
+        return m.soc[len(T_SOC)-1, b] >= terminal_soc_min # prevents end-of-horizon depletion
+    m.terminal_soc = pyo.Constraint(m.B, rule=terminal_soc)
 
     return m

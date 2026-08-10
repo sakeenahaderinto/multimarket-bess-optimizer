@@ -192,13 +192,8 @@ def _read_ending_soc(model: pyo.ConcreteModel, battery_id: str, settle_t: int | 
     """
 
     try:
-        target_t = settle_t if settle_t is not None else max(t for (t, b, s) in model.soc.keys() if b == battery_id)
-        soc_vals = [
-            pyo.value(model.soc[target_t, battery_id, s])
-            for (t, b, s) in model.soc.keys()
-            if t == target_t and b == battery_id
-        ]
-        return sum(soc_vals) / len(soc_vals)
+        target_t = settle_t if settle_t is not None else max(t for (t, b) in model.soc.keys() if b == battery_id)
+        return pyo.value(model.soc[target_t, battery_id])
     except (AttributeError, ValueError, ZeroDivisionError):
         return None
 
@@ -425,8 +420,11 @@ def run_backtest(
 
         try:
             if scenario_builder is None:
-                corr_matrix = _estimate_correlation_matrix(cutoff_date=str(current_date),
-                                                           use_spread=spread_fc_win is not None,)
+                gate_origin = pd.Timestamp(current_date, tz=ref_tz) - pd.Timedelta(hours=13, minutes=30)
+                corr_matrix = _estimate_correlation_matrix(
+                    cutoff_date=str(gate_origin),
+                    use_spread=spread_fc_win is not None,
+                )
 
                 scenarios = sample_scenarios_multimarket(
                     da_fc_win, bm_fc_win, dcl_fc_win, dch_fc_win,
