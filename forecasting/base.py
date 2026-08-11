@@ -88,6 +88,9 @@ class BaseForecaster:
     GATE_ORIGIN_COLS: frozenset = frozenset({
         "demand_lag_48",
         "price_lag_48",
+        "bm_price_lag_48",
+        "dc_low_price_lag_48",
+        "dc_high_price_lag_48",
         "bm_imbalance_volume_lag_48",
         "wind_change_lag_48",
         "spread_lag_48",
