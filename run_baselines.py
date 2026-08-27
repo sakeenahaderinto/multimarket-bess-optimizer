@@ -37,6 +37,7 @@ import pandas as pd
 
 from backtest.engine import run_backtest
 from baselines.scenarios import build_median_scenario, make_naive_scenario_builder
+from forecasting.base import BaseForecaster
 from run_backtest import _ensure_utc, _load_actual, _load_dc_actual, _load_forecast
 
 logging.basicConfig(
@@ -117,6 +118,41 @@ def _shared_clean_dates(*result_dfs: pd.DataFrame) -> set:
     return common
 
 
+def _compute_held_out_forecast_metrics(da_actual, bm_actual, dc_low_actual, dc_high_actual,
+                                       da_fc, bm_fc, dc_low_fc, dc_high_fc, clean_dates: set) -> pd.DataFrame:
+    """Compute forecast evaluation metrics specifically on the shared clean-date set."""
+    metrics_rows = []
+    
+    # Map markets to their actual and forecast frames
+    markets = [
+        ("DA (£/MWh)",      da_actual["value"],      da_fc),
+        ("BM (£/MWh)",      bm_actual["value"],      bm_fc),
+        ("DC Low (£/MW/h)",  dc_low_actual["value"],  dc_low_fc),
+        ("DC High (£/MW/h)", dc_high_actual["value"], dc_high_fc),
+    ]
+    
+    for name, actual_s, fc_df in markets:
+        # Filter to clean dates
+        clean_mask = fc_df.index.map(lambda ts: ts.date()).isin(clean_dates)
+        fc_clean = fc_df[clean_mask]
+        
+        # Align actuals
+        common_idx = fc_clean.index.intersection(actual_s.index)
+        if len(common_idx) == 0:
+            continue
+            
+        y_true = actual_s.loc[common_idx].to_numpy(dtype=float)
+        q10 = fc_clean.loc[common_idx, "q10"].to_numpy(dtype=float)
+        q50 = fc_clean.loc[common_idx, "q50"].to_numpy(dtype=float)
+        q90 = fc_clean.loc[common_idx, "q90"].to_numpy(dtype=float)
+        
+        m = BaseForecaster.evaluate_forecast_metrics(y_true, q10, q50, q90)
+        m["market"] = name
+        m["n_periods"] = len(common_idx)
+        metrics_rows.append(m)
+        
+    return pd.DataFrame(metrics_rows).set_index("market")
+
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
@@ -167,19 +203,19 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
     ]
 
     # Keyword arguments shared by all run_backtest calls
-    shared_kwargs = dict(
-        da_actual=da_actual,
-        bm_actual=bm_actual,
-        dc_low_actual=dc_low_actual,
-        dc_high_actual=dc_high_actual,
-        da_forecast=da_fc,
-        bm_forecast=bm_fc,
-        dc_low_forecast=dc_low_fc,
-        dc_high_forecast=dc_high_fc,
-        start_date=start_date,
-        end_date=end_date,
-        seed=42,
-    )
+    shared_kwargs = {
+        "da_actual": da_actual,
+        "bm_actual": bm_actual,
+        "dc_low_actual": dc_low_actual,
+        "dc_high_actual": dc_high_actual,
+        "da_forecast": da_fc,
+        "bm_forecast": bm_fc,
+        "dc_low_forecast": dc_low_fc,
+        "dc_high_forecast": dc_high_fc,
+        "start_date": start_date,
+        "end_date": end_date,
+        "seed": 42,
+    }
 
     # ----------------------------------------------------------------
     # 4. Run each strategy; save raw results immediately
@@ -195,7 +231,7 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
             logger.warning("No results for '%s' — skipping.", label)
             continue
 
-        out_path = RESULTS_DIR / f"backtest_{label}.parquet"
+        out_path = RESULTS_DIR / f"backtest_{label}_{period}.parquet"
         df.to_parquet(out_path)
         logger.info("  %d rows -> %s", len(df), out_path)
 
@@ -234,11 +270,20 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
     rows = [_compute_metrics(df, label, clean_dates) for label, df in all_results.items()]
     comparison = pd.DataFrame(rows).set_index("strategy")
 
-    parquet_path = RESULTS_DIR / "baseline_comparison.parquet"
-    csv_path     = RESULTS_DIR / "baseline_comparison.csv"
+    parquet_path = RESULTS_DIR / f"baseline_comparison_{period}.parquet"
+    csv_path     = RESULTS_DIR / f"baseline_comparison_{period}.csv"
     comparison.to_parquet(parquet_path)
     comparison.to_csv(csv_path)
     logger.info("Comparison table -> %s and %s", parquet_path, csv_path)
+
+    # Compute forecast metrics on the same clean dates
+    fc_metrics = _compute_held_out_forecast_metrics(
+        da_actual, bm_actual, dc_low_30, dc_high_30,
+        da_fc, bm_fc, dc_low_fc, dc_high_fc, clean_dates
+    )
+    fc_csv_path = RESULTS_DIR / f"held_out_forecast_metrics_{period}.csv"
+    fc_metrics.to_csv(fc_csv_path)
+    logger.info("Held-out forecast metrics -> %s", fc_csv_path)
 
     # ----------------------------------------------------------------
     # 7. Print summary
@@ -253,6 +298,9 @@ def run_all(period: str, start_date: str, end_date: str) -> None:
     print(f"  Baseline comparison — {period.upper()}  ({start_date} -> {end_date})")
     print(f"  Shared clean-date set: {len(clean_dates)} days")
     print(f"{'='*72}")
+    print(f"\n  Held-out Forecast Performance (on the SAME {len(clean_dates)} clean dates):")
+    print(fc_metrics.to_string())
+    print()
     print(comparison[display_cols].to_string())
     print()
     print("  Market revenue breakdown (£):")

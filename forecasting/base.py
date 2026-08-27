@@ -1,8 +1,8 @@
 import logging
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-import re
 
 import lightgbm as lgb
 import numpy as np
@@ -28,14 +28,14 @@ RANDOM_STATE = 42
 
 QUANTILES = [0.1, 0.5, 0.9]
 
-LGBM_SHARED_PARAMS = dict(
-    objective="quantile",
-    learning_rate=0.05,
-    num_leaves=31,
-    n_jobs=-1,
-    verbose=-1,
-    random_state=RANDOM_STATE,
-)
+LGBM_SHARED_PARAMS = {
+    "objective": "quantile",
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "n_jobs": -1,
+    "verbose": -1,
+    "random_state": RANDOM_STATE,
+}
 CV_N_ESTIMATORS = 500
 
 # ---------------------------------------------------------------------------
@@ -104,6 +104,37 @@ class BaseForecaster:
         errors = actuals - preds
         return float(np.mean(np.where(errors >= 0, q * errors, (q - 1) * errors)))
 
+    @staticmethod
+    def evaluate_forecast_metrics(actuals: np.ndarray, q10: np.ndarray, q50: np.ndarray, q90: np.ndarray) -> dict:
+        """Compute MAE, pinball losses, 80% coverage, and Winkler score."""
+        errors = actuals - q50
+        mae = float(np.mean(np.abs(errors)))
+        
+        # Pinball loss
+        e10 = actuals - q10
+        pb10 = float(np.mean(np.where(e10 >= 0, 0.1 * e10, -0.9 * e10)))
+        e90 = actuals - q90
+        pb90 = float(np.mean(np.where(e90 >= 0, 0.9 * e90, -0.1 * e90)))
+        
+        # Empirical coverage (target: 80%)
+        coverage = float(np.mean((actuals >= q10) & (actuals <= q90)) * 100)
+        
+        # Winkler Score for (1 - alpha) = 80% interval (alpha = 0.2)
+        alpha = 0.2
+        width = q90 - q10
+        penalty_low = np.where(actuals < q10, (2.0 / alpha) * (q10 - actuals), 0.0)
+        penalty_high = np.where(actuals > q90, (2.0 / alpha) * (actuals - q90), 0.0)
+        winkler = float(np.mean(width + penalty_low + penalty_high))
+
+        return {
+            "mae": round(mae, 3),
+            "pinball_q10": round(pb10, 3),
+            "pinball_q90": round(pb90, 3),
+            "coverage_pct": round(coverage, 1),
+            "winkler_score": round(winkler, 3),
+        }
+
+    
     def _report_crossing_rate(self, df: pd.DataFrame, context: str) -> pd.DataFrame:
         """
         Correct quantile crossing in [q10, q50, q90] and log the crossing rate.

@@ -1,10 +1,9 @@
-
 import numpy as np
 import pyomo.environ as pyo
 from pyomo.opt import TerminationCondition
-from optimiser.model import build_model
-from backtest.engine import _read_ending_soc
 
+from backtest.engine import _read_ending_soc
+from optimiser.model import build_model
 
 
 def build_scenarios(n_periods=4, price=0.0):
@@ -105,9 +104,13 @@ def test_dc_only_prices_reserves_capacity():
 def test_final_period_no_free_discharge():
     """Battery should not discharge for free in the final period."""
     scenarios = build_scenarios(n_periods=4, price=0.0)
-    scenarios["da"][0, 3] = 100.0  # high price only in final period
+    scenarios["da"] = np.full((1,4), 100.0)  # high price only in final period
     batteries = build_battery()
-    model     = build_model(batteries, scenarios, OPT_SETTINGS)
+
+    settings = dict(OPT_SETTINGS)
+    settings["terminal_soc_min"] = "0.5"
+
+    model     = build_model(batteries, scenarios, settings)
     solve(model)
 
     # Battery starts at 50% SoC. To discharge at t=3 it needs energy.
@@ -116,11 +119,29 @@ def test_final_period_no_free_discharge():
     discharge_t3 = pyo.value(model.da_discharge[3, "test_bat"])
     soc_final    = pyo.value(model.soc[4, "test_bat", 0])
 
-    assert soc_final >= 0.1, "Terminal SoC should be above hard lower bound"
-    # Revenue should be zero or negative — no free energy to sell
-    print(f"  discharge_t3={discharge_t3:.4f}, soc_final={soc_final:.4f}")
-    print(f"  objective={pyo.value(model.obj):.4f}")
+    assert abs(discharge_t3) < 1e-6, f"Expected zero final discharge without prior charging, got {discharge_t3}"
+    assert soc_final >= 0.5 - 1e-6, f"Terminal SoC fell below floor: {soc_final}"
+    assert abs(pyo.value(model.obj)) < 1e-6, f"Expected zero net revenue, got {pyo.value(model.obj)}"
 
+def test_terminal_soc_constraint():
+    """Ending SoC must meet or exceed terminal_soc_min even when prices incentivize discharging."""
+    scenarios = build_scenarios(n_periods=4, price=0.0)
+    scenarios["da"][0, 0] = 50.0  # incentive to discharge stored energy
+    scenarios["da"][0, 1] = 50.0
+    batteries = build_battery()  # current_soc = 0.5
+
+    settings = dict(OPT_SETTINGS)
+    settings["terminal_soc_min"] = "0.7"  # requires battery to charge up to 0.7 by horizon end
+
+    # Provide cheap charge opportunity at t=0 so battery can reach 0.7
+    scenarios["da"][0, 0] = 10.0
+    scenarios["da"][0, 3] = 100.0
+
+    model = build_model(batteries, scenarios, settings)
+    solve(model)
+
+    soc_final = pyo.value(model.soc[4, "test_bat", 0])
+    assert soc_final >= 0.7 - 1e-6, f"Terminal SoC constraint violated: expected >= 0.7, got {soc_final:.4f}"
 
 def test_charge_discharge_not_simultaneous():
     """Battery should not charge and discharge at the same time."""
@@ -181,7 +202,7 @@ def test_roundtrip_efficiency_convention():
     eta_rte     = 0.85
     eta_oneway  = math.sqrt(eta_rte)   # one-way efficiency per side
     cap         = 1.0
-    bm_t0 = pyo.value(model.bm_offer[0, "test_bat", 0])
+    bm_t0 = pyo.value(model.bm_offer[0, "test_bat"])
 
 
     charge_t0    = pyo.value(model.da_charge[0,    "test_bat"])
@@ -252,7 +273,7 @@ def test_dc_soc_window_binds():
     model = build_model(batteries, scenarios, OPT_SETTINGS)
     solve(model)
 
-    import math
+    
     cap      = 1.0
     eta      = 0.85 ** 0.5  # one-way efficiency — matches model convention
     dur_h    = 0.5           # dc_response_duration_h default
@@ -299,8 +320,8 @@ def test_soc_boundary_at_settle_t():
     via_helper = _read_ending_soc(model, "test_bat", settle_t=settle_t)
 
     # Direct read: average soc[settle_t] across all scenarios (1 scenario here)
-    soc_keys = [(t, b, s) for (t, b, s) in model.soc.keys() if t == settle_t and b == "test_bat"]
-    direct = sum(pyo.value(model.soc[t, b, s]) for (t, b, s) in soc_keys) / len(soc_keys)
+    # soc_keys = [(t, b, s) for (t, b, s) in model.soc.keys() if t == settle_t and b == "test_bat"]
+    direct = pyo.value(model.soc[settle_t, "test_bat", 0])
 
     assert via_helper is not None, "_read_ending_soc returned None"
     assert abs(via_helper - direct) < 1e-8, (
@@ -311,8 +332,63 @@ def test_soc_boundary_at_settle_t():
         f"Expected SOC to rise after charging at t=0, got {via_helper:.4f}"
     )
     print(f"  soc[{settle_t}] via helper={via_helper:.4f}, direct={direct:.4f}")
-    
 
+def test_cvar_objective():
+    """CVaR objective should penalize tail risk and construct Rockafellar-Uryasev shortfall variables."""
+    # 2 scenarios: Scenario 0 has negative prices, Scenario 1 has positive prices
+    scenarios = {
+        "da":      np.array([[10.0, 10.0, 10.0, 10.0], [10.0, 10.0, 10.0, 100.0]]),
+        "bm":      np.array([[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]),
+        "dc_low":  np.zeros((2, 4)),
+        "dc_high": np.zeros((2, 4)),
+        "seed":    999,
+    }
+    batteries = build_battery()
+    settings = dict(OPT_SETTINGS)
+    settings["mean_weight"] = "0.5"
+    settings["cvar_alpha"]  = "0.5"
+
+    model = build_model(batteries, scenarios, settings)
+    solve(model)
+
+    assert hasattr(model, "zeta"), "Model missing CVaR VaR variable zeta"
+    assert hasattr(model, "shortfall"), "Model missing CVaR shortfall variable"
+    zeta_val = pyo.value(model.zeta)
+    assert zeta_val is not None, "VaR variable zeta has no value"
+
+def test_recourse_scenario_differentiation():
+    """Under different price scenarios, first-stage bm_offer is identical but recourse bm_dispatch and soc differ."""
+    # 2 scenarios:
+    # Scenario 0: BM price spike at t=2 (price = 200)
+    # Scenario 1: BM price zero at t=2 (price = 0)
+    scenarios = {
+        "da":      np.full((2, 4), 10.0),
+        "bm":      np.array([[0.0, 0.0, 200.0, 0.0], [0.0, 0.0, 0.0, 0.0]]),
+        "dc_low":  np.zeros((2, 4)),
+        "dc_high": np.zeros((2, 4)),
+        "seed":    42,
+    }
+    batteries = build_battery()
+    model = build_model(batteries, scenarios, OPT_SETTINGS)
+    solve(model)
+
+    # First-stage decision (bm_offer) is scenario-independent
+    bm_offer_t2 = pyo.value(model.bm_offer[2, "test_bat"])
+    assert bm_offer_t2 > 1e-6, "Expected non-zero first-stage BM offer at t=2"
+
+    # Second-stage recourse (bm_dispatch) is scenario-dependent
+    dispatch_s0 = pyo.value(model.bm_dispatch[2, "test_bat", 0])
+    dispatch_s1 = pyo.value(model.bm_dispatch[2, "test_bat", 1])
+
+    assert dispatch_s0 > 1e-6, f"Expected BM dispatch in Scenario 0 (price 200), got {dispatch_s0}"
+    assert abs(dispatch_s1) < 1e-6, f"Expected zero BM dispatch in Scenario 1 (price 0), got {dispatch_s1}"
+
+    # Second-stage SoC paths should differ after t=2 due to different BM dispatch
+    soc_s0_after_t2 = pyo.value(model.soc[3, "test_bat", 0])
+    soc_s1_after_t2 = pyo.value(model.soc[3, "test_bat", 1])
+    assert soc_s0_after_t2 < soc_s1_after_t2, (
+        f"SoC after t=2 should be lower in Scenario 0 due to BM discharge: s0={soc_s0_after_t2:.4f}, s1={soc_s1_after_t2:.4f}"
+    )
 
 
 
@@ -321,9 +397,13 @@ if __name__ == "__main__":
     test_simple_arbitrage()
     test_dc_only_prices_reserves_capacity()
     test_final_period_no_free_discharge()
+    test_terminal_soc_constraint()
     test_charge_discharge_not_simultaneous()
     test_soc_continuity()
     test_roundtrip_efficiency_convention()
     test_dc_block_consistency()
     test_dc_soc_window_binds()
     test_soc_boundary_at_settle_t()
+    test_cvar_objective()
+    test_recourse_scenario_differentiation()
+    print("\nAll diagnostic tests passed successfully!")

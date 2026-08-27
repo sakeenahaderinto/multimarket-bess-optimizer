@@ -157,6 +157,10 @@ def main() -> None:
                         help="Load spread_calibrated_*.parquet instead of spread_*.parquet")
     parser.add_argument("--n-scenarios", type=int, default=20,
                         help="Scenarios per day for the Gaussian copula builder")
+    parser.add_argument("--mean-weight", type=float, default=1.0,
+                        help="Weight on expected revenue in [0, 1]. <1.0 activates CVaR (default: 1.0)")
+    parser.add_argument("--cvar-alpha", type=float, default=0.90,
+                        help="CVaR confidence level in (0, 1) (default: 0.90 for 10% worst tail)")
 
     args = parser.parse_args()
 
@@ -213,8 +217,11 @@ def main() -> None:
     _log_data_summary("dc_low_fc",  dc_low_fc)
     _log_data_summary("dc_high_fc", dc_high_fc)
 
+
     opt_settings = DEFAULT_OPT_SETTINGS.copy()
     opt_settings["n_scenarios"] = args.n_scenarios
+    opt_settings["mean_weight"] = args.mean_weight
+    opt_settings["cvar_alpha"]  = args.cvar_alpha
 
 
     logger.info("Running backtest...")

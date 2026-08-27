@@ -53,10 +53,11 @@ E --> F[Walk-Forward Backtest]
 
 **Decision Variables:**
 
-- `da_charge`, `da_discharge`: Day-ahead schedule (MW) --- *Scenario-independent (committed before uncertainty resolves)*
-- `dc_low`, `dc_high`: DC capacity per EFA block (MW) --- *Scenario-independent*
-- `bm_offer`: BM dispatch (MW) --- *Scenario-independent (committed before gate close)*
-- `soc`: State of charge (fraction) --- *Scenario-independent*
+- `da_charge`, `da_discharge`: Day-ahead schedule (MW) --- *First-stage (scenario-independent)*
+- `dc_low`, `dc_high`: DC capacity per EFA block (MW) --- *First-stage (scenario-independent)*
+- `bm_offer`: BM offer capacity submitted to ESO (MW) --- *First-stage (scenario-independent)*
+- `bm_dispatch`: BM accepted volume in scenario $s$ --- *Second-stage recourse (scenario-dependent)*
+- `soc`: State of charge in scenario $s$ (fraction) --- *Second-stage recourse (scenario-dependent)*
 - `charge_mode`: Binary variable preventing simultaneous DA charging and discharging.
 
 **Objective Function:**
@@ -180,7 +181,7 @@ multimarket-bess-optimizer/
 
 **Single asset, no network constraints.** The model treats the battery as connected to an infinite bus with no feeder capacity constraints or topology awareness. In practice, a battery's optimal dispatch depends on its location in the distribution network.
 
-**BM simplification.** BM offer is modelled as a scenario-independent commitment decided before gate close, settled at the realised system sell price. Because the commitment is fixed before uncertainty resolves, the optimiser hedges conservatively across scenarios rather than adapting BM dispatch to each price realisation. A production model would distinguish offers from bids, model the baseline physical notification, and account for bid/offer acceptance probability explicitly.
+**BM simplification.** BM offer is committed as a first-stage decision, with second-stage scenario recourse $(bm_dispatch \le bm_offer)$. realized revenue settles against the system sell price. In GB market operations, ESO dispatches units selectively via Bid-Offer Acceptances (BOAs). We assume full acceptance of offered capacity, and this serves as an optimistic revenue proxy that may overstate BM revenues.
 
 **Degradation convention.** Degradation cost uses `replacement_cost / (2 × cycle_life)` applied to both charge and discharge throughput, treating one full cycle as one charge plus one discharge event.
 

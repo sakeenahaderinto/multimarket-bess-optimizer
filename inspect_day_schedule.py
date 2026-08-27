@@ -14,7 +14,6 @@ Usage:
 
 from datetime import timedelta
 
-import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 from pyomo.opt import SolverFactory, TerminationCondition
@@ -26,12 +25,17 @@ from backtest.engine import (
     SETTLE_PERIODS,
     _normalise_to_30min,
 )
+from historical_error_scenarios import (
+    build_error_path_pool,
+    make_historical_error_scenario_builder,
+)
 from optimiser.model import build_model
-from optimiser.scenarios import sample_scenarios_multimarket, _estimate_correlation_matrix
+from optimiser.scenarios import (
+    _estimate_correlation_matrix,
+    sample_scenarios_multimarket,
+)
 from run_backtest import _load_actual, _load_dc_actual, _load_forecast
-
 from run_fixed_month_comparison import make_perfect_foresight_builder
-from historical_error_scenarios import build_error_path_pool, make_historical_error_scenario_builder
 
 # ---------------------------------------------------------------------------
 # Target day — perfect_foresight's worst DA day from the Dec 2022 comparison

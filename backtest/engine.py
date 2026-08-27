@@ -114,9 +114,9 @@ def settle_revenue(
     Actual series must be pre-aligned to the dispatch window with exactly n_periods rows.
     Settlement uses positional indexing into .values — series must be gap-free and ordered.
 
-    BM settlement is an expected-value approximation: bm_offer (scenario-dependent) is
-    averaged across scenarios and settled against the single realised price. This is not
-    a physical dispatch path — see session_fixes_and_decisions.md S2-11 for implications.
+    BM settlement uses the scenario-expected dispatch volume (mean bm_dispatch across scenarios)
+    settled against the realized system sell price. This assumes full acceptance of dispatch
+    volume at system price, which serves as an optimistic upper-bound proxy for BM revenues.
     """
     if battery is None:
         battery = DEFAULT_BATTERY
@@ -148,7 +148,7 @@ def settle_revenue(
         bm_p = float(bm_vals[t]) if t < len(bm_vals) else 0.0
 
         
-        bm_mw = pyo.value(model.bm_offer[t, battery_id])
+        bm_mw = sum(pyo.value(model.bm_dispatch[t, battery_id, s]) for s in model.S) / n_s
         bm_rev += bm_p * bm_mw * 0.5
 
         dcl_p = float(dcl_vals[t]) if t < len(dcl_vals) else 0.0
@@ -192,11 +192,11 @@ def _read_ending_soc(model: pyo.ConcreteModel, battery_id: str, settle_t: int | 
     """
 
     try:
-        target_t = settle_t if settle_t is not None else max(t for (t, b) in model.soc.keys() if b == battery_id)
-        return pyo.value(model.soc[target_t, battery_id])
+        target_t = settle_t if settle_t is not None else max(t for (t, b, s) in model.soc if b == battery_id)
+        soc_vals = [pyo.value(model.soc[target_t, battery_id, s]) for s in model.S]
+        return float(np.mean(soc_vals))
     except (AttributeError, ValueError, ZeroDivisionError):
         return None
-
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +512,7 @@ def run_backtest(
             del model
 
         except Exception as e:
-            logger.error("Error on %s: %s", current_date, e, exc_info=True)
+            logger.error("Error on %s: %s", current_date, e, exc_info=True)  
             n_failed += 1
             results.append(
                 {
